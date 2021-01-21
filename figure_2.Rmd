@@ -1,0 +1,86 @@
+---
+title: "UVI Information Content based on UV Net Measurements"
+author: "YouV Labs, Inc."
+date: "9/27/2018"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(latex2exp)
+data_dir <- 'data'
+
+eas <- function(lam){
+  w <- lam
+  w[lam>250 & lam <= 298] <- 1
+  w[lam>298 & lam <= 328] <- 10^(0.094*(298-lam[lam>298 & lam <= 328]))
+  w[lam>328 & lam <= 400] <- 10^(0.015*(139-lam[lam>328 & lam <= 400]))
+  w[lam>400] <- 0
+  return(w)
+}
+uvdata_file <- c("uvnet.Rdat", "uvnet_all.Rdat") %>% paste('..',.,sep='/') # replace '..' with data_dir after prepping the uvnet data and putting it in the folder data
+if(file.exists(uvdata_file[2])){
+  load(uvdata_file[2])
+} else if(file.exists(uvdata_file[1])) {
+  load(uvdata_file[1])
+} else {
+  sd <- read.csv("/Volumes/GoogleDrive/shared drives/Clustering-spectra-shared/ThomasFiles/SpectralStudy/sensorData.csv")
+  save(sd,file="uvnet.Rdat")
+} 
+```
+### Introduction
+
+Estimating ground level UV using inexpensive detectors is a significant challenge. We can explore the potential for accuracy of specific detectors using the large database of existing ground based observations that was collected by the UV Net project.
+We have loaded over 73,000 spectra from the UV Net database and will explore their variation in this note. [NB we are using the file compiled by Thomas P. as a starting point]
+UV Net reports the surface solar intensity as a function of wavelength from 286 to 363 nm in units of $W/m^2$.
+The metric of interest, the UVI, is calculated from the spectrum by applying erythemal weights, $w$, and integrating.
+
+```{r solar_calcs}
+sdm <- as.matrix(sd[!duplicated(rownames(sd)),]) #[,2:ncol(sd)]) # col1 is location+time
+sdlam <- names(sd) %>% gsub('[AX]','',.) %>% as.numeric() / 10  # no longer subsetting
+dl <- ((max(sdlam)-min(sdlam))/(length(sdlam)-1)) # dl=0.5nm for UV-Net
+uvi <- sdm %*% eas(sdlam) * dl / 25  # dl is width of integration bin, 25 is for units of UVI with 1 UVI being 25 mW/m2
+outlier <- uvi > 15 | uvi < 0.01  # find and remove outliers
+sdm <- sdm[!outlier,]
+uvi <- uvi[!outlier]
+```
+
+### linear models by wavelength
+
+We first explore the potential of single wavelength measurements to predict the overall UVI by fitting the data collected at each wavelength to the UVI resulting from all wavelengths and then monitoring accuracy for a given tolerance $t$.
+\begin{equation}\label{accuracy}
+A_t = P(\|\frac{E_{Dmi}}{U_i}-1\|<t)
+\end{equation}
+
+```{r linear_model}
+if (!exists("lincals")){
+  lincals <- apply(sdm, 2, function(ilam) lm(uvi~ilam)) #takes a while, 154 fits over 405k+ spectra
+}
+cals <- sapply(lincals, function(linmodel) linmodel[['coefficients']] %>% unlist) # extract slope and intercept
+preds <- apply(sdm, 1, function(s){s * cals[2,] + cals[1,]})  %>% t # output should have same dimenstions as sdm, but each column is has the UVI predicted for the row's spectrum using the linear model derived from the wavelength name of the column.
+```
+
+```{r err_distrib}
+perrs <- apply(preds, 2, function(p){100 * abs(p/uvi-1)}) # percent errors, has the same dimensions as preds.
+err_quant <- apply(perrs, 2, quantile, (1:99)/100) # the % error for each quantile, e.g. for quantile q the size of the error in the best performing q% of the fits.
+```
+
+```{r acc_figs}
+par(mar=c(4.1, 5.6, 0.5, 0.5))
+plot(sdlam, err_quant[50,], type="l", lwd=4, cex.axis=1.5, cex.lab=2,
+     xlab="Wavelength (nm)", ylab="Median Error (%)")
+```
+
+# Details of the 310nm linear model
+
+The linear model has coefficients `r lincals[[which(sdlam==310)]]$coefficients`,
+with confidence intervals
+`r confint(lincals[[which(sdlam==310)]])`, and $R^2=$
+`r summary(lincals[[which(sdlam==310)]])$r.squared`.
+
+
+### fin

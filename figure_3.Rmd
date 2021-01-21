@@ -1,0 +1,200 @@
+---
+title: "R Notebook"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+Let's make a simple tool to make a publication quality figure with the grahical derivation of the Andover result. 
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(latex2exp)
+library(limSolve)
+
+not_outlier <- function(x){
+  q <- quantile(x, na.rm=T)
+  iqb <- q[4]-q[2]
+  return ((x>q[2]-2*iqb) & (x<q[4]+2*iqb))
+}
+without_outlier <- function(x){x[not_outlier(x)]}
+
+eas <- function(lam){
+  w <- lam
+  w[lam>250 & lam <= 298] <- 1
+  w[lam>298 & lam <= 328] <- 10^(0.094*(298-lam[lam>298 & lam <= 328]))
+  w[lam>328 & lam <= 400] <- 10^(0.015*(139-lam[lam>328 & lam <= 400]))
+  w[lam>400] <- 0
+  return(w)
+}
+
+lambda <- seq(286.5,363,0.5)
+```
+
+## Andover graphical derivation
+
+We begin by loading a dataset.
+
+```{r datasets}
+uvnet_path <- '/Volumes/GoogleDrive/Shared drives/Research/Data science/Monte Carlo simulation for diode evaluation/UVnet (EPA)'
+uvnet_sites <- c("Acadia NP ME", "Albuquerque NM", "Boulder CO", "Canyonlands NP UT",
+                 "Chicago IL", "Gaithersburg MD", "Research Triangle Park NC",
+                 "Riverside CA", "Big Bend TX")
+uvnet_files <- paste(uvnet_path, uvnet_sites, uvnet_sites, sep="/")
+uvnet_files <- uvnet_files %>% paste0(".RData")
+
+dset <- 1   # change these three variables to sample the data set on a different day or location
+day <- 173  #  for Acadia, summer solstice (June 21,2000) select [dset=1, day=173, year=2000]
+year <- 2000
+
+```
+
+We chose `r uvnet_files[dset]`. And then find all the spectra from the `r day`th day in `r year`.
+
+```{r loadset}
+load(uvnet_files[dset])  #  loads: data_file_info[date, qc info, location, instrument], scans_info[scan #, solar zenith, hour, spec_name], spectra[matrix of irradiance values]
+# UV Net units are _____
+rowfilter <- duplicated(scans_info)
+lam <- gsub("nm", "", colnames(spectra)) %>% as.numeric
+easv <- eas(lam)
+scans_info$uvi <- spectra %*% easv * 0.5 / 25
+uvimin <- 0.01
+uvimax <- 15
+rowfilter <- rowfilter | scans_info$uvi <= uvimin | scans_info$uvi >= uvimax
+scans_info <- scans_info[!rowfilter,]
+spectra <- spectra[!rowfilter,]
+days <- gsub('s.*$','',scans_info$spec_name) %>% unique
+```
+
+
+There are `r nrow(scans_info)` unique spectra with uvi from `r uvimin` to `r uvimax` collected from `r uvnet_sites[dset]`.
+
+```{r}
+day_scans <- function(year = 1999, day = 180, location="Acadia NP", select_scans = c(), maxI=60, 
+                      norm="uvi", tstring="default", 
+                      uvimin=0, irrad_weight="both", cex=1.0)
+{
+  if (length(select_scans) > 0){
+    snames <- scans_info$spec_name[select_scans]
+    sindices <- which(select_scans)
+  } else
+  {
+    snames <- scans_info$spec_name
+    sindices <- 1:nrow(scans_info)
+  }
+  # ------------------------- x and y axis labels ---------------------
+  if (norm == "uvi"){
+    ylab = ""
+    xlab = "Wavelength (nm)"
+  } else if (norm == "andover")
+  {    ylab = ""} else
+  {
+    ylab=""
+    xlab=""
+  }
+  default_title <- paste(location, strftime(strptime(paste0(year,day), format="%Y%j"), format="%b %d, %Y"), sep=" ")
+  if (tstring == "default") {
+    tstring <- default_title
+  }
+  # ------------------------plot box--------------------------------------------
+  plot(c(293, 363), c(0, maxI), pch=".", ylab=ylab, xlab=xlab, yaxt="n",
+       main=tstring, cex.axis=cex, cex.lab=cex, xaxt="n")
+  # ------------------------annotation------------------------------------------
+  if (norm == "uvi"){ 
+    axis(1, cex.axis=0.8*cex)
+    if (irrad_weight == "erythema"){
+            axis(2, cex.axis=0.8*cex)
+            text(320, maxI*.9, adj=0, "(c) Erythemal Irradiance / UVI", cex=cex)
+          } else  {
+        text(325, maxI*.9, adj=0, "Irradiance / UVI", cex=cex)
+          }
+  } else 
+  {
+    if (irrad_weight == "erythema"){
+      axis(4, cex.axis=0.8*cex)
+      text(320, maxI*.9, adj=0, "(b) Erythemal Irradiance", cex=cex)
+    } else  {
+      axis(2, cex.axis=0.8*cex)
+      text(293, maxI*.9, adj=0, "(a) Irradiance", cex=cex)
+    }
+  }
+  # ------------------------------------ plot spectral data -------------------------
+  for (i in sindices){
+    if(scans_info$uvi[i] > uvimin){
+    if (norm == "uvi"){
+      if (irrad_weight == "erythema"){
+        lines(lam, (easv * spectra[i,])/(spectra[i,] %*% easv*.5/25)[1], col="red" )
+      } else {
+        lines(lam, spectra[i,] / (spectra[i,] %*% eas(lambda) * 0.5 / 25)[1] )
+      }
+    } else {
+      if (irrad_weight == "erythema"){
+        lines(lam, easv * spectra[i, ], col="red" )
+      } else{
+        lines(lam, spectra[i, ])
+      }
+    }
+    }
+  }
+  lines(c(310, 310), c(0,0.8 * maxI), col="blue", lwd=2)
+# -------------------------------inset-------------------------
+  if (norm == "uvi" & irrad_weight=="erythema"){
+    bx = c(300, 315)
+    by = c(0.7, 1.8)
+    lines(c(bx[1], bx[2], bx[2], bx[1], bx[1]), c(by[1], by[1], by[2], by[2], by[1]))
+    mar=par("mar")  # store settings
+    fig=par("fig")
+    par(fig=c(0.5, 0.9, 0.18, 0.3), mar=c(0, 0, 0, 0), new=TRUE)
+    plot(c(bx[1], bx[2]), c(by[1], by[2]), pch=".", ylab="", xlab="", yaxt="n", xaxt="n")
+    for (i in sindices){
+      if(scans_info$uvi[i] > uvimin){
+        lines(lam, easv * spectra[i,]/(spectra[i,] %*% easv * 0.5 / 25)[1], col="red" ) 
+      }
+    }
+    lines(c(309.5,309.5), c(by[1],by[2]), lwd=2, col="blue")
+    lines(c(310.5,310.5), c(by[1],by[2]), lwd=2, col="blue")
+    par(fig=fig, mar=mar, new=FALSE) # restore settings
+  }
+}
+
+day_3fig <- function(year = 1999, day = 180, location="Acadia NP", select_scans = c(), uvimin=0.1, cex=1.5)
+{
+  par(mfrow=c(3,1), mar=c(0,3.3,0.5,3.3))
+  layout(matrix(1:3), heights=c(1, .85 ,1.15))
+  day_scans(year=year, day=day, location=location, select_scans=select_scans, norm="none", 
+            maxI=max(spectra[select_spectra, ])*1.05, uvimin=uvimin, tstring="", irrad_weight="raw", cex=cex)
+  par(mar=c(0,3.3,0,3.3))
+  es <- apply(spectra[select_spectra, ],1,function(x) x*easv)
+  day_scans(year=year, day=day, location=location, select_scans=select_scans, norm="none", 
+            maxI=max(es*1.05), uvimin=uvimin, tstring="", irrad_weight="erythema", cex=cex)
+  par(mar=c(8,3.3,0,3.3))
+  
+  day_scans(year=year, day=day, location=location, select_scans=select_scans, norm="uvi", 
+            maxI=max(es/max(scans_info$uvi[select_scans])), tstring="", uvimin=uvimin,
+            irrad_weight="erythema", cex=cex)
+}
+```
+
+```{r subset, fig.width=8, fig.height=9}
+figsave=FALSE
+#select_spectra <- grepl(paste0("[:alpha:]",year,day), scans_info$spec_name)
+
+select_spectra <- grepl(paste0(year,day,"s"), scans_info$spec_name)
+scans_used <- scans_info[select_spectra, ]
+spectra_used <- spectra[select_spectra, ]
+if(figsave){  png(filename="fig2derive.png", width=700, height=1020) }
+
+day_3fig(year=year, day=day, location=uvnet_sites[dset], select_scans = select_spectra, uvimin=.5, cex=3)
+
+if(figsave){  dev.off()  }
+```
+
+Graphical derivation of the 310nm result. 
+Irradiance units are $W/m^2/nm$ and the UVI normalized units are $W/m^2/nm/UVI$. 
+Erythema weighted curves (red) are multiplied by 200. 
+Plotted data are all spectra with UVI > 0.5 taken at 
+`r paste(uvnet_sites[dset],"on", strftime(strptime(paste0(year,day), format="%Y%j"), format="%b %d, %Y"), sep=" ")`.
+

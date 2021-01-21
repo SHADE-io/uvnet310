@@ -1,0 +1,203 @@
+---
+title: "Standard Atmosphere"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, fig.width = 6, fig.height = 4)
+library(tidyverse)
+library(latex2exp)
+library(XML)
+data_dir <- 'data'
+
+eas <- function(lam){
+  w <- lam
+  w[lam>250 & lam <= 298] <- 1
+  w[lam>298 & lam <= 328] <- 10^(0.094*(298-lam[lam>298 & lam <= 328]))
+  w[lam>328 & lam <= 400] <- 10^(0.015*(139-lam[lam>328 & lam <= 400]))
+  w[lam>400] <- 0
+  return(w)
+}
+
+sdlam <- seq(286.5, 363, 0.5)
+```
+
+For the Andover paper, figure 1 is a review of the standard atmosphere focused on the UV and it's UVI.
+
+The standard atmosphere, is ASTM G-173-03 and is well described at https://www.nrel.gov/grid/solar-resource/spectra-am1.5.html, where we downloaded the relevant tables (https://www.nrel.gov/grid/solar-resource/assets/data/astmg173.xls) on November 11, 2020, and then converted to .csv by saving the astmg173 tab as .csv using Microsoft Excel.
+
+```{r, load_astmg173}
+astmg173 <- read.csv(paste(data_dir,"astmg173.csv",sep="/"), skip=1)
+# units are nm, W/m2/nm, W/m2/nm, W/m2/nm
+# note that the 'direct' column is only for light coming from the direction of the sun
+# while the 'tilt' columm reports the total irradiance on a surface tilted away from the sun
+names(astmg173) <- c('sdlam', 'Extraterrestrial','tilt','direct')
+```
+
+For our own sanity, we can compare this to the ISS solar spectral standard.
+
+
+```{r atmosci_solar_data}
+# -----------
+#        SOLAR EMISSION SPECTRUM
+# Meftah, Mustapha, et al. "SOLAR-ISS: A new reference spectrum based on SOLAR/SOLSPEC observations." 
+# Astronomy & Astrophysics 611 (2018): A1.
+#  This is the solar spectrum from space, not on the ground where varying conditions make for varying spectra
+# http://bdap.ipsl.fr/voscat/SOLAR_ISS_V1.html
+# -----------
+r_solar <- paste(data_dir, "SOLAR_ISS_V1.Rdat", sep='/')
+html_solar <- gsub('Rdat','html',r_solar)
+if(!exists('sun_file')){
+  if (!file.exists(r_solar)){
+    sun_file <- htmlParse(html_solar)
+    sun_nodes <- getNodeSet(sun_file, "//table")
+    sun <- readHTMLTable(sun_nodes[1][[1]], colClasses = c("numeric", "numeric", "numeric"),
+                         headers = c("wavelength", "SSI", "Uncertainty"), stringsAsFactors = FALSE)
+    names(sun) <- c("wavelength", "SSI", "Uncertainty")
+    sun <- sun[!is.na(sun$wavelength), ]
+    save(sun, file=r_solar)
+  } else {
+    load(r_solar)
+  }
+  sun_uv <- sun[sun$wavelength >= min(sdlam) & sun$wavelength <= 400, ]
+}
+
+plot(sun_uv$wavelength, sun_uv$SSI, type="l", xlab="Wavelength (nm)", ylab="Irradiance (W/m2/nm)", main="ISS Solar Irradiance Above Atmosphere \n ASTM G-173 Extraterrestrial Irradiance")
+points(c(310, 310), c(0,2), type="l", lwd=1.5)
+lines(astmg173$sdlam, astmg173$Extraterrestrial, col="red")
+```
+
+They are the same, but the ISS spectrum is reported with finer spectral resolution.
+
+Light from the sun suffers two main losses as it passes through the atmosphere,
+aerosol loss or scattering away due to stuff, mostly water droplets, found in the atmosphere,
+and absorption due to the molecules floating in the atmosphere, mostly ozone.
+
+
+```{r ozone_load}
+#
+#  from http://igaco-o3.fmi.fi/ACSO/cross_asections.html
+#  ref http://www.atmos-meas-tech.net/6/3055/2013/amt-6-3055-2013.pdf
+fname <- paste(data_dir,'SCIA_O3_Temp_cross-section_V4.1.DAT',sep="/")
+
+col.names <- c("wavelength", "O3_203", "O3_223", "O3_243", "O3_273", "O3_293")
+o3 <- read.table(fname, skip = 21, col.names = col.names)
+
+plot(o3$wavelength[o3$wavelength>305 & o3$wavelength<400], 1e22 * o3$O3_273[o3$wavelength>305 & o3$wavelength<400], type="l", col="blue", xlab="Wavelength", ylab="Cross Section * 10^22 (cm2/molecule)", log="y")
+
+lines(o3$wavelength[685], o3$O3_273[685], type="p", col="blue")
+par(fig=c(0.5, 1, .5,1), new = T)
+plot(o3$wavelength[o3$wavelength>305 & o3$wavelength<400], 1e22 * o3$O3_273[o3$wavelength>305 & o3$wavelength<400], type="l", col="blue", xlab="", ylab="", log="y", xlim=c(305,315), ylim=c(600,2000))
+```
+
+The ASTM standard irradiance spectrum is for a spot on the northern hemisphere of the earth tilted at 37 degrees from the direct normal when the equivalent ozone layer is 340 Dobson Units (0.34cm) and with a particular set of 33 atmospheric layers.
+This is too complicated for our purposes.
+We instead look at the spectrum on earth and try to build it out of aerosol loss,
+the simple huber approximation for the wavelength dependence of rayleigh scattering,
+and ozone absorption.
+
+```{r matchatm}
+du <- 340
+ray <- -55e-4
+aer <- 0.83
+indices <- astmg173$sdlam>280 & astmg173$sdlam<=400
+irsimp <- data.frame(sdlam = astmg173$sdlam[indices],
+                     Extraterrestrial = astmg173$Extraterrestrial[indices],
+                     tilt = astmg173$tilt[indices],
+                     direct = astmg173$direct[indices])
+plot(irsimp$sdlam, irsimp$tilt, type="l", 
+     xlab="Wavelength (nm)", ylab="Irradiance (W/m2/nm)")
+o3cx = approx(o3$wavelength, o3$O3_273, 
+              xout=irsimp$sdlam)$y
+irsimp$huber <- irsimp$Extraterrestrial * exp(-du * o3cx / 3.721e-17 / sin(37*pi/180) ) * exp(-aer) * exp(-ray*(irsimp$sdlam-320))
+irsimp$huber_direct <- irsimp$Extraterrestrial * exp(-du * o3cx / 3.721e-17) * exp(-aer/sin(37*pi/180)) * exp(-ray*(irsimp$sdlam-320))
+lines(irsimp$sdlam, irsimp$huber, col="black", lty=2)
+```
+
+Frankly, that isn't bad.
+It is a bit heuristic in that the two numbers `r aer` and `r ray` are unlikely
+to be correct, but the model does capture the spirit of the physics without
+getting bogged down in issues critical to other applications such as 
+the angular distribution of incoming light.
+
+
+Next up, the Erythema Action spectrum, or the health weighting of each wavelength.
+
+```{r eas}
+plot(irsimp$sdlam, eas(irsimp$sdlam), log="y", xlab="Wavlength (nm)", ylab="Relative skin sensitivity", type="l", lwd=2)
+```
+
+And the resulting standard skin damage spectrum is
+
+```{r ssxeas}
+plot(irsimp$sdlam, eas(irsimp$sdlam)*irsimp$tilt/.5, xlab="Wavlength (nm)", ylab="Erythemal Irradiance W/m2/nm", type="l", lwd=2)
+uvis <- sum(eas(irsimp$sdlam)*irsimp$tilt)*25/.5
+```
+
+Putting it all together in one tall figure
+
+```{r uviexplain, width=7, height=10.5}
+figsave <- TRUE
+if (figsave){
+mag<-3 } else {mag <- 1}
+cextitle <- 1.5*mag
+if(figsave){
+  png(filename="fig1expl.png", width=mag*340, height=mag*510)
+} # else {figsave=TRUE}
+par(mfrow=c(5,1), mar=c(0,4.1,.2,4.1)*mag, cex=1.25*mag)
+layout(matrix(1:5), heights=c(0.8, 0.8 ,0.8, 0.8, 1.3))
+
+#---------------------------------------(a)-------------------------------------------
+plot(astmg173$sdlam, astmg173$Extraterrestrial, type="l", xaxt="n", ylab="", yaxt="n", lwd=1.5*mag, xlim=c(280,400))
+points(310, astmg173$Extraterrestrial[astmg173$sdlam==310], type="p", lwd=2*mag, col="blue", cex=mag)
+text(285,1.6,"(a) Irradiance above the atmosphere", adj=0, cex=cextitle)
+
+#----------------------------------------(b)------------------------------------------
+par(mar=c(0,4.1,0,4.1)*mag)
+plot(o3$wavelength[o3$wavelength>280 & o3$wavelength<400], 
+     o3$O3_273[o3$wavelength>280 & o3$wavelength<400], type="l", col="blue",
+     lwd=1.5*mag,
+     xaxt="n", yaxt="n", log="y", ylab="")
+text(285,2e-23, "(b) Ozone absorption (Log)", adj=0, cex=cextitle)
+points(o3$wavelength[685], o3$O3_273[685], lwd=mag, type="p", col="blue", cex=mag)
+
+#-----------------------------------------(c)-----------------------------------------
+plot(irsimp$sdlam, irsimp$tilt/.5, xaxt="n", yaxt="n", type="l", lwd=2*mag, ylab="")
+points(310,irsimp$tilt[irsimp$sdlam==310]/.5, col="blue", cex=mag, lwd=2*mag)
+lines(irsimp$sdlam, irsimp$huber/.5, col="red", lty=3, lwd=2.3*mag)
+text(285,1.75,"(c) Irradiance under atmosphere", adj=0, cex=cextitle)
+legend(x=c(370, 390), y=c(0.1, 0.8), lty=c(1, 3), lwd=2.3 * mag, legend=c("AM1.5", "Model"),
+       col=c("black","red"), cex=0.75*cextitle, bty="n")
+#------------------------------------------(d)----------------------------------------
+plot(irsimp$sdlam, eas(irsimp$sdlam), log="y", xaxt="n", yaxt="n", ylab="", type="l", 
+     col="blue", lwd=2*mag, ylim=c(1e-4,2))
+points(310,eas(310), col="blue", lwd=2*mag, cex=mag)
+text(340,.1,"(d) Relative erythemal\n     sensitivity (Log)", adj=0, cex=cextitle)
+
+#------------------------------------------(e)----------------------------------------
+par(mar=c(5,4.1,0,4.1)*mag)
+plot(irsimp$sdlam, eas(irsimp$sdlam)*irsimp$tilt/.5 , type="l", lwd=2*mag, col="red",
+     cex.axis=mag, xaxt="n", ylab="", xlab="", yaxt="n")
+polygon(c(irsimp$sdlam, 2800), c(eas(irsimp$sdlam) * irsimp$tilt / 0.5, 0), col="pink", border=NA)
+points(310,eas(310)*irsimp$tilt[irsimp$sdlam==310]/.5, col="blue", lwd=mag, cex=mag)
+
+axis(side="1", cex.axis=1.25*mag)
+title(xlab="Wavelength(nm)", line=5, cex.lab=1.5*mag)
+text(340, 0.006,"(e) Erythema weighted\n     irradiance", adj=0, cex=cextitle)
+text(307, 0.0035,"UVI", adj=0, cex=cextitle)
+
+#-------------------------ozone inset----------------------------------------------
+par(fig=c(0.66, 1, .68, 0.82), new = T, mar=c(2,0,0,4.1)*mag)
+plot(o3$wavelength[o3$wavelength>305 & o3$wavelength<315], 
+     1e22 * o3$O3_273[o3$wavelength>305 & o3$wavelength<315], type="l", col="blue",
+     yaxt="n", xaxt="n", xlab="", log="y", ylab="", lwd=2*mag, 
+     cex.axis=cextitle*1.5)
+points(o3$wavelength[685],1e22 * o3$O3_273[685], type="p", col="blue", lwd=mag, cex=mag, cex.axis=mag)
+
+#----------------------------------------------------------------------------------
+axis(1,cex.axis=1.5)
+if (figsave){ dev.off() }
+```
+
+Figure 1.

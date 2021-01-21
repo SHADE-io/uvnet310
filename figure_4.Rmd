@@ -1,0 +1,243 @@
+---
+title: "Heuristic support for 310nm as an indicator of UVI"
+author: "Shade, andover_motivation_story_v2.Rmd"
+date: "9/10/2020"
+output: pdf_document
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+#   -----------  libraries ------
+library(tidyverse)
+library(latex2exp)
+library(minpack.lm)
+#   ------------ helpers --------
+not_outlier <- function(x){
+  q <- quantile(x, na.rm=T)
+  iqb <- q[4]-q[2]
+  return ((x>q[2]-2*iqb) & (x<q[4]+2*iqb))
+}
+without_outlier <- function(x){x[not_outlier(x)]}
+
+eas <- function(lam){
+  w <- lam
+  w[lam>250 & lam <= 298] <- 1
+  w[lam>298 & lam <= 328] <- 10^(0.094*(298-lam[lam>298 & lam <= 328]))
+  w[lam>328 & lam <= 400] <- 10^(0.015*(139-lam[lam>328 & lam <= 400]))
+  w[lam>400] <- 0
+  return(w)
+}
+lambda <- seq(286.5, 363, 0.5)
+data_dir <- 'data'
+```
+
+
+```{r data}
+#      -----------   OZONE  --------------
+#  from http://igaco-o3.fmi.fi/ACSO/cross_sections.html
+#  ref http://www.atmos-meas-tech.net/6/3055/2013/amt-6-3055-2013.pdf
+#   Units are cm^2 / molecule
+fname <- paste(data_dir, 'SCIA_O3_Temp_cross-section_V4.1.DAT', sep='/')
+col.names <- c("wavelength", "O3_203", "O3_223", "O3_243", "O3_273", "O3_293")
+o3 <- read.table(fname, skip = 21, col.names = col.names)
+rm(col.names, fname)
+# -----------
+#        SOLAR EMISSION SPECTRUM
+# Meftah, Mustapha, et al. "SOLAR-ISS: A new reference spectrum based on SOLAR/SOLSPEC observations." 
+# Astronomy & Astrophysics 611 (2018): A1.
+#  This is the solar spectrum from space, not on the ground where varying conditions make for varying spectra
+# http://bdap.ipsl.fr/voscat/SOLAR_ISS_V1.html
+# -----------
+solar_fname <- paste(data_dir, "SOLAR_ISS_V1.Rdat", sep='/')
+if(!exists('sun_file')){
+  if (!file.exists(solar_fname)){
+    library(XML)
+    sun_file <- htmlParse(paste(data_dir,'SOLAR_ISS_V1.html', sep='/'))
+    sun_nodes <- getNodeSet(sun_file, "//table")
+    sun <- readHTMLTable(sun_nodes[1][[1]], colClasses = c("numeric", "numeric", "numeric"),
+                         headers = c("wavelength", "SSI", "Uncertainty"), stringsAsFactors = FALSE)
+    names(sun) <- c("wavelength", "SSI", "Uncertainty")
+    sun <- sun[!is.na(sun$wavelength), ]
+    save(sun, file=solar_fname)
+  } else {
+    load(solar_fname)
+  }
+#  sun_uv <- sun[sun$wavelength >= min(lambda) & sun$wavelength <= 400, ]
+}
+rm(solar_fname)
+```
+
+
+```{r consolidate_data}
+#-------------------
+#  combine solar emission, water absorption, and ozone absorption in one data file
+#    units are W/m2/nm, cm^2/nm/molecule
+#-------------------
+uv_data <- data.frame(wavelength = lambda,
+                      wavelength_name = paste0('A', lambda*10),
+                      eas = eas(lambda),
+                      solar = approx(sun$wavelength, sun$SSI, xout=lambda)$y,
+                      o3cx = approx(o3$wavelength, o3$O3_273, xout=lambda)$y )
+```
+
+
+```{r huber_model}
+#-----------------------------
+#  Develop many spectra and probe range over which uvi tracks 310 irradiance within the model
+#  following Huber, Martin, et al. "Total atmospheric ozone determined from spectral measurements of direct solar UV irradiance." Geophysical research letters 22.1 (1995): 53-56.
+#-----------------------------
+#              MODEL    ------
+coszenith <- 1.0
+huber <- function(p){
+  return(1000 * uv_data$solar * exp(-p[1]*1e21*uv_data$o3cx/coszenith) * exp(-p[2]) * exp(-p[3]*(uv_data$wavelength-320)*1e-4)/coszenith)
+  }
+```
+
+
+```{r fit_outputs}
+#     ----- FIT OUTPUTS ----
+huber_uvnet <- read.csv("~/Downloads/huber_cmp.csv")  #TODO: include this calculation (from Fig 2)
+huber_uvnet <- huber_uvnet[!is.na(huber_uvnet$aerosol), ]
+huber_uvnet <- distinct(huber_uvnet)
+huber_uvnet <- huber_uvnet[not_outlier(huber_uvnet$uvi), ]
+
+huber_wrap <- function(hrow) {
+  p <- c(hrow["ozone"], hrow["aerosol"], hrow["rayleigh"]) %>% as.numeric
+  coszenith <- cos(as.numeric(hrow["zenith"]))
+  return(huber(p) %*% eas(uv_data$wavelength) * 0.5 / 25)
+}
+huber_uvnet$huberuvi <- apply(huber_uvnet, 1, huber_wrap)
+```
+
+
+```{r PCA}
+#------------------ PCA of parameter space ------------------
+#    unthinking approach just feeding the data into base R
+#------------------------------------------------------------
+pmat <- huber_uvnet[ , c("ozone", "aerosol", "rayleigh", "zenith")] %>% as.matrix
+#------------ PCA pass 2. With Info and Dx of Huber Model ------------
+#    only scale from the core part of the point cloud. use zenith
+#    walk the matrix spaced by the PCA but in parameter space
+#    color each point by the %error between predicted irrad310 and UVI
+#---------------------------------------------------------------------
+
+rscale <- function(x){
+  not_outliers <- apply(x, 2, not_outlier)
+  cloud_keep <- apply(not_outliers, 1, all)
+  cmeans <- apply(x[cloud_keep, ], 2, mean, na.rm=T)
+  csd <- apply(x[cloud_keep, ], 2, sd, na.rm=T)
+  y <- x
+  for (ind in ncol(x)){
+   y[ , ind] <- (x[ ,ind] - cmeans[ind])/csd[ind] 
+  }
+  scaled <- as.list(c(0, 0, 0, 0))
+  names(scaled) <- c("means", "sdev","outlier" , "mat")
+  scaled$means <- cmeans
+  scaled$sd <- csd
+  scaled$outlier <- !cloud_keep
+  scaled$mat <- y
+  return(scaled)
+}
+pmats <- rscale(pmat)  # a version of scale that only considers points in which all parameters are non-outliers
+huberpca <- princomp(pmats$mat[!pmats$outlier, ])  # all the non-outlier points rotated into PCA dimensions
+pcaloadings <- huberpca$loadings
+rm(huberpca, pmat)
+```
+
+
+```{r sample_param_space}
+seq1 <- seq(-2, 2, 0.25)
+replicates <- 2
+nspec <- replicates * length(seq1)^4
+hpar <- matrix(data=0, nrow=nspec, ncol=4)
+colnames(hpar) <- colnames(pmats$mat)
+rcounter <- 1
+for (p1 in seq1){
+  for (p2 in seq1) {
+    for (p3 in seq1) {
+      for (p4 in seq1) {
+        for (p5 in 1:replicates){
+          hpar[rcounter,] <- hpar[rcounter, ] + c(p1, p2, p3, p4) + runif(4, min=-0.25, max=0.25)
+          rcounter <- rcounter + 1
+        }
+      }
+    }
+  }
+}
+hpar <- (pcaloadings %*% t(hpar)) %>% t  # take a grid from -2 to 2 sd around the mean and rotate them back to be parallel to param space
+hpar <- apply(hpar, 1, function(x)(x*pmats$sd + pmats$means)) %>% t    # then rescale back into parameter space
+# ahuber <- function(x){
+#   y <- as.numeric(x)
+#   return(huber(as.numeric(x)))
+# }
+hspectra <- apply(hpar, 1, function(x) huber(as.numeric(x))) %>% t  # calculate the huber model spectrum for each of these gridded (and fuzzed) points
+
+```
+
+
+Just to keep track of what's going on, we'll plot 100 of the model spectra.
+
+```{r visualize_spectra}
+#  Show some sample spectra
+coszenith <- cos(pmats$means["zenith"]*pi/180)
+plot(lambda, huber(pmats$means)/1000, type="l", ylim=c(0,2.5),
+     xlab="Wavelength (nm)", ylab="Irradiance (W/m2)", main = "Sample model spectra")
+for (i in sample(nrow(hspectra), min(nrow(hspectra), 100))){
+  lines(lambda, hspectra[i,]/1000)
+}
+```
+
+
+
+```{r model_performance}
+#   Calculate UVI
+hpar <- as.data.frame(hpar)
+hpar$uvi <- hspectra %*% eas(lambda) * 0.5 / 25  # 0.5 is dlambda, 25 is to convert into UVI units
+
+#   check performance of 310nm model
+ind_310 <- which(lambda == 310)
+hpar$i310 <- hspectra[, ind_310]/1000
+hfit <- glm(uvi ~ i310, data=hpar[not_outlier(hpar$uvi), ])
+hpar$uvi_err <- abs(hpar$uvi /( hfit$coefficients["i310"]*hspectra[, ind_310]/1000 + hfit$coefficients["(Intercept)"]) - 1)
+hpar$uvi_err <- abs(hpar$uvi /( 77.6*hspectra[, ind_310]/1000 - 0.02) - 1)
+
+print(hfit)
+rm(ind_310, hfit)
+```
+
+
+```{r param_space_visualization3_contoured}
+savefig=TRUE  
+ecbreaks <- c(0.02, 0.1, 0.30, 1, 1.5, 10000)
+hpar$errf <- sapply(hpar$uvi_err,function(x) min(which(abs(x) < ecbreaks)) ) %>% as.factor
+
+sclab <- (100*ecbreaks) %>% gsub("^","< ", .) %>% gsub("$"," %",.)
+sclab[length(sclab)] <- gsub("<",">",sclab[length(sclab)-1]) 
+
+rfilter <- !is.na(hpar$errf) &
+           hpar$ozone > 0 & hpar$ozone*37209.3 < 750 &
+           hpar$aerosol > 0 & hpar$aerosol/2.302 < 2.0
+
+if(savefig){
+png('fig4.png', height=480, width=480)
+}
+
+ggplot(hpar[rfilter, ], aes(x=ozone*37209.3, y=aerosol/2.302)) + 
+  geom_point(aes(color=errf), size = 0.5, alpha = alpha) +
+  xlab('Ozone (DU)') + ylab('Log(Aerosol Loss)') +
+  geom_point(aes(x=340, y=0.83/2.302),color="black") +
+  geom_vline(xintercept=93, linetype=2) + geom_vline(xintercept=220, linetype=3) +
+  ylim(0,2) + xlim(0,750) + scale_color_discrete(labels=sclab) + labs(color="% error") +
+  guides(colour = guide_legend(override.aes = list(size=4, alpha = 1))) +
+  theme_bw() +
+  theme(axis.title = element_text(size=18)) %>% 
+  print  # figure saved as .png 480x480. .svg file is huge because of the 400,000 points.
+
+if(savefig){
+  dev.off()
+}
+```
+
+
+### fin
+the end
