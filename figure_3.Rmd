@@ -1,27 +1,20 @@
 ---
-title: "R Notebook"
-output:
-  html_document:
-    df_print: paged
-  html_notebook: default
-  pdf_document: default
+title: "The Ultraviolet Index is well estimated by the terrestrial irradiance at 310nm\nFigure 3"
+author: "YouV Labs, Inc."
+date: "1/22/2021"
+output: pdf_document
 ---
 
-Let's make a simple tool to make a publication quality figure with the grahical derivation of the Andover result. 
+Let's make a simple tool to make a publication quality figure with the grahical derivation of the 310nm result. 
 
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
 library(latex2exp)
 library(limSolve)
+data_dir <- 'data'
 
-not_outlier <- function(x){
-  q <- quantile(x, na.rm=T)
-  iqb <- q[4]-q[2]
-  return ((x>q[2]-2*iqb) & (x<q[4]+2*iqb))
-}
-without_outlier <- function(x){x[not_outlier(x)]}
-
+#   ------------ helpers --------
 eas <- function(lam){
   w <- lam
   w[lam>250 & lam <= 298] <- 1
@@ -39,24 +32,28 @@ lambda <- seq(286.5,363,0.5)
 We begin by loading a dataset.
 
 ```{r datasets}
-uvnet_path <- '/Volumes/GoogleDrive/Shared drives/Research/Data science/Monte Carlo simulation for diode evaluation/UVnet (EPA)'
+uvnet_path <- '/Volumes/GoogleDrive/Shared drives/Research/Data science/Monte Carlo simulation for diode evaluation/UVnet (EPA)'  # set to 'data' for most users
 uvnet_sites <- c("Acadia NP ME", "Albuquerque NM", "Boulder CO", "Canyonlands NP UT",
                  "Chicago IL", "Gaithersburg MD", "Research Triangle Park NC",
                  "Riverside CA", "Big Bend TX")
 uvnet_files <- paste(uvnet_path, uvnet_sites, uvnet_sites, sep="/")
 uvnet_files <- uvnet_files %>% paste0(".RData")
+```
 
+And then we select a day and location for the figure. If you want a different choice, change the values in this chunk.
+
+```{r select_day_date}
 dset <- 1   # change these three variables to sample the data set on a different day or location
 day <- 173  #  for Acadia, summer solstice (June 21,2000) select [dset=1, day=173, year=2000]
 year <- 2000
-
 ```
 
-We chose `r uvnet_files[dset]`. And then find all the spectra from the `r day`th day in `r year`.
+We chose `r uvnet_files[dset]`. 
+
+And then find all the spectra from the `r day`th day in `r year`.
 
 ```{r loadset}
 load(uvnet_files[dset])  #  loads: data_file_info[date, qc info, location, instrument], scans_info[scan #, solar zenith, hour, spec_name], spectra[matrix of irradiance values]
-# UV Net units are _____
 rowfilter <- duplicated(scans_info)
 lam <- gsub("nm", "", colnames(spectra)) %>% as.numeric
 easv <- eas(lam)

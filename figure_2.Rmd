@@ -1,19 +1,17 @@
 ---
-title: "UVI Information Content based on UV Net Measurements"
+title: "The Ultraviolet Index is well estimated by the terrestrial irradiance at 310nm\nFigure 2"
 author: "YouV Labs, Inc."
-date: "9/27/2018"
-output:
-  pdf_document: default
-  word_document: default
-  html_document: default
+date: "1/22/2021"
+output: pdf_document
 ---
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
 library(latex2exp)
+
 data_dir <- 'data'
 
+#   ------------ helpers --------
 eas <- function(lam){
   w <- lam
   w[lam>250 & lam <= 298] <- 1
@@ -22,26 +20,22 @@ eas <- function(lam){
   w[lam>400] <- 0
   return(w)
 }
-uvdata_file <- c("uvnet.Rdat", "uvnet_all.Rdat") %>% paste('..',.,sep='/') # replace '..' with data_dir after prepping the uvnet data and putting it in the folder data
-if(file.exists(uvdata_file[2])){
-  load(uvdata_file[2])
-} else if(file.exists(uvdata_file[1])) {
-  load(uvdata_file[1])
-} else {
-  sd <- read.csv("/Volumes/GoogleDrive/shared drives/Clustering-spectra-shared/ThomasFiles/SpectralStudy/sensorData.csv")
-  save(sd,file="uvnet.Rdat")
-} 
+
+uvdata_file <- paste(data_dir,"uvnet_all.Rdat",sep='/') # replace '..' with data_dir after prepping the uvnet data and putting it in the folder data
+load(uvdata_file)
+sd <- distinct(sd)
+ 
 ```
 ### Introduction
 
-Estimating ground level UV using inexpensive detectors is a significant challenge. We can explore the potential for accuracy of specific detectors using the large database of existing ground based observations that was collected by the UV Net project.
-We have loaded over 73,000 spectra from the UV Net database and will explore their variation in this note. [NB we are using the file compiled by Thomas P. as a starting point]
-UV Net reports the surface solar intensity as a function of wavelength from 286 to 363 nm in units of $W/m^2$.
-The metric of interest, the UVI, is calculated from the spectrum by applying erythemal weights, $w$, and integrating.
+Estimating ground level UV using inexpensive detectors is a significant challenge. 
+We can explore the potential for accuracy of specific detectors using the large database of existing ground based observations that was collected by the UV Net project.
+We have loaded 408,563 spectra from the UV Net database, 405,328 of which have UVI < 15, and will use them to hunt for simple linear models that predict UVI using only a single wavelength from each spectrum.
+UV Net collects the surface solar intensity as a function of wavelength from 286 to 363 nm in units of $W/m^2$.
 
 ```{r solar_calcs}
-sdm <- as.matrix(sd[!duplicated(rownames(sd)),]) #[,2:ncol(sd)]) # col1 is location+time
-sdlam <- names(sd) %>% gsub('[AX]','',.) %>% as.numeric() / 10  # no longer subsetting
+sdm <- as.matrix(sd[!duplicated(rownames(sd)),])
+sdlam <- names(sd) %>% gsub('[AX]','',.) %>% as.numeric() / 10  
 dl <- ((max(sdlam)-min(sdlam))/(length(sdlam)-1)) # dl=0.5nm for UV-Net
 uvi <- sdm %*% eas(sdlam) * dl / 25  # dl is width of integration bin, 25 is for units of UVI with 1 UVI being 25 mW/m2
 outlier <- uvi > 15 | uvi < 0.01  # find and remove outliers
@@ -64,6 +58,9 @@ cals <- sapply(lincals, function(linmodel) linmodel[['coefficients']] %>% unlist
 preds <- apply(sdm, 1, function(s){s * cals[2,] + cals[1,]})  %>% t # output should have same dimenstions as sdm, but each column is has the UVI predicted for the row's spectrum using the linear model derived from the wavelength name of the column.
 ```
 
+For each model and each spectrum we check the error.
+Each model is characterized by the percentage of spectra that are within an engineering tolerance $t$ as a function of $t$.
+
 ```{r err_distrib}
 perrs <- apply(preds, 2, function(p){100 * abs(p/uvi-1)}) # percent errors, has the same dimensions as preds.
 err_quant <- apply(perrs, 2, quantile, (1:99)/100) # the % error for each quantile, e.g. for quantile q the size of the error in the best performing q% of the fits.
@@ -82,5 +79,3 @@ with confidence intervals
 `r confint(lincals[[which(sdlam==310)]])`, and $R^2=$
 `r summary(lincals[[which(sdlam==310)]])$r.squared`.
 
-
-### fin

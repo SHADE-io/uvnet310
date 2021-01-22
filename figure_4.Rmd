@@ -1,24 +1,17 @@
 ---
-title: "Heuristic support for 310nm as an indicator of UVI"
-author: "Shade, andover_motivation_story_v2.Rmd"
-date: "9/10/2020"
+title: "The Ultraviolet Index is well estimated by the terrestrial irradiance at 310nm\nFigure 4"
+author: "YouV Labs, Inc."
+date: "1/22/2021"
 output: pdf_document
 ---
-
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
-#   -----------  libraries ------
 library(tidyverse)
 library(latex2exp)
 library(minpack.lm)
-#   ------------ helpers --------
-not_outlier <- function(x){
-  q <- quantile(x, na.rm=T)
-  iqb <- q[4]-q[2]
-  return ((x>q[2]-2*iqb) & (x<q[4]+2*iqb))
-}
-without_outlier <- function(x){x[not_outlier(x)]}
+data_dir <- 'data'
 
+#   ------------ helpers --------
 eas <- function(lam){
   w <- lam
   w[lam>250 & lam <= 298] <- 1
@@ -27,8 +20,13 @@ eas <- function(lam){
   w[lam>400] <- 0
   return(w)
 }
+not_outlier <- function(x){
+  q <- quantile(x, na.rm=T)
+  iqb <- q[4]-q[2]
+  return ((x>q[2]-2*iqb) & (x<q[4]+2*iqb))
+}
+
 lambda <- seq(286.5, 363, 0.5)
-data_dir <- 'data'
 ```
 
 
@@ -87,7 +85,7 @@ uv_data <- data.frame(wavelength = lambda,
 #  following Huber, Martin, et al. "Total atmospheric ozone determined from spectral measurements of direct solar UV irradiance." Geophysical research letters 22.1 (1995): 53-56.
 #-----------------------------
 #              MODEL    ------
-coszenith <- 1.0
+coszenith <- 1.0  # global variable
 huber <- function(p){
   return(1000 * uv_data$solar * exp(-p[1]*1e21*uv_data$o3cx/coszenith) * exp(-p[2]) * exp(-p[3]*(uv_data$wavelength-320)*1e-4)/coszenith)
   }
@@ -96,7 +94,7 @@ huber <- function(p){
 
 ```{r fit_outputs}
 #     ----- FIT OUTPUTS ----
-huber_uvnet <- read.csv("~/Downloads/huber_cmp.csv")  #TODO: include this calculation (from Fig 2)
+huber_uvnet <- read.csv(paste(data_dir,"huber_cmp.csv", sep="/"))  #TODO: include this calculation (from Fig 2)
 huber_uvnet <- huber_uvnet[!is.na(huber_uvnet$aerosol), ]
 huber_uvnet <- distinct(huber_uvnet)
 huber_uvnet <- huber_uvnet[not_outlier(huber_uvnet$uvi), ]
@@ -146,7 +144,7 @@ rm(huberpca, pmat)
 
 
 ```{r sample_param_space}
-seq1 <- seq(-2, 2, 0.25)
+seq1 <- seq(-2, 2, 0.25)  # may span non-physical parameters like A<0.
 replicates <- 2
 nspec <- replicates * length(seq1)^4
 hpar <- matrix(data=0, nrow=nspec, ncol=4)
@@ -166,10 +164,6 @@ for (p1 in seq1){
 }
 hpar <- (pcaloadings %*% t(hpar)) %>% t  # take a grid from -2 to 2 sd around the mean and rotate them back to be parallel to param space
 hpar <- apply(hpar, 1, function(x)(x*pmats$sd + pmats$means)) %>% t    # then rescale back into parameter space
-# ahuber <- function(x){
-#   y <- as.numeric(x)
-#   return(huber(as.numeric(x)))
-# }
 hspectra <- apply(hpar, 1, function(x) huber(as.numeric(x))) %>% t  # calculate the huber model spectrum for each of these gridded (and fuzzed) points
 
 ```
@@ -187,7 +181,8 @@ for (i in sample(nrow(hspectra), min(nrow(hspectra), 100))){
 }
 ```
 
-
+A few of these will be terrible because some parameters represent conditions under which neither the Huber model nor the $I_{310}$ model work.
+The limits of these models are exactly what we are interested in here.
 
 ```{r model_performance}
 #   Calculate UVI
@@ -197,47 +192,51 @@ hpar$uvi <- hspectra %*% eas(lambda) * 0.5 / 25  # 0.5 is dlambda, 25 is to conv
 #   check performance of 310nm model
 ind_310 <- which(lambda == 310)
 hpar$i310 <- hspectra[, ind_310]/1000
-hfit <- glm(uvi ~ i310, data=hpar[not_outlier(hpar$uvi), ])
-hpar$uvi_err <- abs(hpar$uvi /( hfit$coefficients["i310"]*hspectra[, ind_310]/1000 + hfit$coefficients["(Intercept)"]) - 1)
 hpar$uvi_err <- abs(hpar$uvi /( 77.6*hspectra[, ind_310]/1000 - 0.02) - 1)
 
-print(hfit)
-rm(ind_310, hfit)
+rm(ind_310)
 ```
 
 
 ```{r param_space_visualization3_contoured}
-savefig=TRUE  
-ecbreaks <- c(0.02, 0.1, 0.30, 1, 1.5, 10000)
+savefig=FALSE  
+ecbreaks <- c(0.02, 0.1, 0.30, 1, 1.5, 1e9)
 hpar$errf <- sapply(hpar$uvi_err,function(x) min(which(abs(x) < ecbreaks)) ) %>% as.factor
 
 sclab <- (100*ecbreaks) %>% gsub("^","< ", .) %>% gsub("$"," %",.)
 sclab[length(sclab)] <- gsub("<",">",sclab[length(sclab)-1]) 
 
+# ---- Figure limits are physical values of ozone and aerosol 
 rfilter <- !is.na(hpar$errf) &
            hpar$ozone > 0 & hpar$ozone*37209.3 < 750 &
            hpar$aerosol > 0 & hpar$aerosol/2.302 < 2.0
 
-if(savefig){
-png('fig4.png', height=480, width=480)
-}
-
-ggplot(hpar[rfilter, ], aes(x=ozone*37209.3, y=aerosol/2.302)) + 
-  geom_point(aes(color=errf), size = 0.5, alpha = alpha) +
+plt <- ggplot(hpar[rfilter, ], aes(x=ozone*37209.3, y=aerosol/2.302)) + 
+  geom_point(aes(color=errf), size = 0.5, alpha = 0.35) +
   xlab('Ozone (DU)') + ylab('Log(Aerosol Loss)') +
-  geom_point(aes(x=340, y=0.83/2.302),color="black") +
-  geom_vline(xintercept=93, linetype=2) + geom_vline(xintercept=220, linetype=3) +
-  ylim(0,2) + xlim(0,750) + scale_color_discrete(labels=sclab) + labs(color="% error") +
-  guides(colour = guide_legend(override.aes = list(size=4, alpha = 1))) +
+  geom_rect(xmin=340-5, xmax=430, ymin=0.83/2.302 - 0.04, ymax=0.83/2.302 + 0.04, fill="white", linetype=0, alpha=0.02) +
+  geom_point(aes(x=340, y=0.83/2.302), size=2, color="black") +
+  geom_vline(xintercept=93, linetype=2, size=1.25) + 
+  geom_vline(xintercept=220, linetype=3, size=1.25) +
+  annotate("text", x=340+7.5, y=0.83/2.302, label="AM1.5", size=6, hjust=0) +
+  annotate("text", x=93+7.5, y=1.875, label="Lowest\nRecorded", size=6, hjust=0) +
+  annotate("text", x=220+7.5, y=2.0, label="Ozone Hole", size=6, hjust=0) +
+  ylim(0,2) + xlim(0,750) + scale_color_discrete(labels=sclab) + labs(color="Error") +
+  guides(colour = guide_legend(override.aes = list(size=6, alpha = 1))) +
   theme_bw() +
-  theme(axis.title = element_text(size=18)) %>% 
-  print  # figure saved as .png 480x480. .svg file is huge because of the 400,000 points.
+  theme(axis.title = element_text(size=20), axis.text = element_text(size=14), 
+        legend.text = element_text(size=14), legend.title = element_text(size=14))
+
+if(savefig){
+png('fig4.png', height=480, width=640)
+}
+print(plt)  # figure saved as .png 480x480. .svg file is huge because of the 400,000 points.
 
 if(savefig){
   dev.off()
+  print(plt)
 }
 ```
 
 
-### fin
-the end
+Figure 4

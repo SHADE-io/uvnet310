@@ -1,8 +1,8 @@
 ---
-title: "Standard Atmosphere"
-output:
-  pdf_document: default
-  html_notebook: default
+title: "The Ultraviolet Index is well estimated by the terrestrial irradiance at 310nm\nFigure 1"
+author: "YouV Labs, Inc."
+date: "1/22/2021"
+output: pdf_document
 ---
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE, fig.width = 6, fig.height = 4)
@@ -11,6 +11,7 @@ library(latex2exp)
 library(XML)
 data_dir <- 'data'
 
+#   ------------ helpers --------
 eas <- function(lam){
   w <- lam
   w[lam>250 & lam <= 298] <- 1
@@ -23,9 +24,10 @@ eas <- function(lam){
 sdlam <- seq(286.5, 363, 0.5)
 ```
 
-For the Andover paper, figure 1 is a review of the standard atmosphere focused on the UV and it's UVI.
+Figure 1 is a review of the standard atmosphere focused on ultraviolet wavelengths and the calculation of the UV Index (UVI).
 
-The standard atmosphere, is ASTM G-173-03 and is well described at https://www.nrel.gov/grid/solar-resource/spectra-am1.5.html, where we downloaded the relevant tables (https://www.nrel.gov/grid/solar-resource/assets/data/astmg173.xls) on November 11, 2020, and then converted to .csv by saving the astmg173 tab as .csv using Microsoft Excel.
+### (a) The standard atmosphere AM0
+ASTM G-173-03  is well described at https://www.nrel.gov/grid/solar-resource/spectra-am1.5.html, where we downloaded the relevant tables (https://www.nrel.gov/grid/solar-resource/assets/data/astmg173.xls) on November 11, 2020, and then converted to .csv by saving the astmg173 tab as .csv using Microsoft Excel.
 
 ```{r, load_astmg173}
 astmg173 <- read.csv(paste(data_dir,"astmg173.csv",sep="/"), skip=1)
@@ -35,7 +37,7 @@ astmg173 <- read.csv(paste(data_dir,"astmg173.csv",sep="/"), skip=1)
 names(astmg173) <- c('sdlam', 'Extraterrestrial','tilt','direct')
 ```
 
-For our own sanity, we can compare this to the ISS solar spectral standard.
+We also compare this astmg173 to the ISS solar spectral standard.
 
 
 ```{r atmosci_solar_data}
@@ -68,7 +70,9 @@ points(c(310, 310), c(0,2), type="l", lwd=1.5)
 lines(astmg173$sdlam, astmg173$Extraterrestrial, col="red")
 ```
 
-They are the same, but the ISS spectrum is reported with finer spectral resolution.
+They are well matched, the ISS spectrum is reported with finer spectral resolution.
+
+### (b) Loss in transit, ozone absorption cross section
 
 Light from the sun suffers two main losses as it passes through the atmosphere,
 aerosol loss or scattering away due to stuff, mostly water droplets, found in the atmosphere,
@@ -87,9 +91,9 @@ o3 <- read.table(fname, skip = 21, col.names = col.names)
 plot(o3$wavelength[o3$wavelength>305 & o3$wavelength<400], 1e22 * o3$O3_273[o3$wavelength>305 & o3$wavelength<400], type="l", col="blue", xlab="Wavelength", ylab="Cross Section * 10^22 (cm2/molecule)", log="y")
 
 lines(o3$wavelength[685], o3$O3_273[685], type="p", col="blue")
-par(fig=c(0.5, 1, .5,1), new = T)
-plot(o3$wavelength[o3$wavelength>305 & o3$wavelength<400], 1e22 * o3$O3_273[o3$wavelength>305 & o3$wavelength<400], type="l", col="blue", xlab="", ylab="", log="y", xlim=c(305,315), ylim=c(600,2000))
 ```
+
+### (c) AM1.5 Irradiance on the ground
 
 The ASTM standard irradiance spectrum is for a spot on the northern hemisphere of the earth tilted at 37 degrees from the direct normal when the equivalent ozone layer is 340 Dobson Units (0.34cm) and with a particular set of 33 atmospheric layers.
 This is too complicated for our purposes.
@@ -98,7 +102,7 @@ the simple huber approximation for the wavelength dependence of rayleigh scatter
 and ozone absorption.
 
 ```{r matchatm}
-du <- 340
+du  <- 340
 ray <- -55e-4
 aer <- 0.83
 indices <- astmg173$sdlam>280 & astmg173$sdlam<=400
@@ -112,7 +116,7 @@ o3cx = approx(o3$wavelength, o3$O3_273,
               xout=irsimp$sdlam)$y
 irsimp$huber <- irsimp$Extraterrestrial * exp(-du * o3cx / 3.721e-17 / sin(37*pi/180) ) * exp(-aer) * exp(-ray*(irsimp$sdlam-320))
 irsimp$huber_direct <- irsimp$Extraterrestrial * exp(-du * o3cx / 3.721e-17) * exp(-aer/sin(37*pi/180)) * exp(-ray*(irsimp$sdlam-320))
-lines(irsimp$sdlam, irsimp$huber, col="black", lty=2)
+lines(irsimp$sdlam, irsimp$huber, col="red", lty=2)
 ```
 
 Frankly, that isn't bad.
@@ -122,20 +126,27 @@ getting bogged down in issues critical to other applications such as
 the angular distribution of incoming light.
 
 
-Next up, the Erythema Action spectrum, or the health weighting of each wavelength.
+### (d) The Erythema Action spectrum
+
+The EAS is the health weighting of each wavelength.
 
 ```{r eas}
 plot(irsimp$sdlam, eas(irsimp$sdlam), log="y", xlab="Wavlength (nm)", ylab="Relative skin sensitivity", type="l", lwd=2)
 ```
 
-And the resulting standard skin damage spectrum is
+### (e) Damage vs wavelength 
+
+The resulting standard skin damage spectrum is
 
 ```{r ssxeas}
 plot(irsimp$sdlam, eas(irsimp$sdlam)*irsimp$tilt/.5, xlab="Wavlength (nm)", ylab="Erythemal Irradiance W/m2/nm", type="l", lwd=2)
 uvis <- sum(eas(irsimp$sdlam)*irsimp$tilt)*25/.5
 ```
 
-Putting it all together in one tall figure
+### Final Figure
+
+
+Saved by this code, displayed in the paper, not here.
 
 ```{r uviexplain, width=7, height=10.5}
 figsave <- TRUE
