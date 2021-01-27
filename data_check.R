@@ -1,6 +1,7 @@
 data_dir <- 'data'
+
 if (!file.exists(paste(data_dir,"astmg173.csv",sep="/"))){
-  print('Figure 1: Mising astmg173.csv')
+  print('Figure 1: Missing astmg173.csv')
   print('Download https://www.nrel.gov/grid/solar-resource/assets/data/astmg173.xls. Then convert to .csv by saving the astmg173 tab as .csv using Microsoft Excel.')
 }
 if (!file.exists(paste(data_dir, "SOLAR_ISS_V1.Rdat", sep='/'))){
@@ -19,7 +20,7 @@ if (!file.exists(paste(data_dir,'uvnet_all.Rdat', sep="/"))){
   print('Figure 2: missing file uvnet.Rdat')
   print('notes are below')
 }
-uvnet_path <- '/Volumes/GoogleDrive/Shared drives/Research/Data science/Monte Carlo simulation for diode evaluation/UVnet (EPA)'
+uvnet_path <- data_dir
 uvnet_sites <- c("Acadia NP ME", "Albuquerque NM", "Boulder CO", "Canyonlands NP UT",
                  "Chicago IL", "Gaithersburg MD", "Research Triangle Park NC",
                  "Riverside CA", "Big Bend TX")

@@ -7,7 +7,7 @@ output: pdf_document
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
-library(latex2exp)
+#library(latex2exp)
 library(minpack.lm)
 data_dir <- 'data'
 

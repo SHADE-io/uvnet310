@@ -10,7 +10,7 @@ Let's make a simple tool to make a publication quality figure with the grahical 
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
 library(tidyverse)
-library(latex2exp)
+#library(latex2exp)
 library(limSolve)
 data_dir <- 'data'
 
