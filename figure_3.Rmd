@@ -5,7 +5,7 @@ date: "1/22/2021"
 output: pdf_document
 ---
 
-Let's make a simple tool to make a publication quality figure with the grahical derivation of the 310nm result. 
+Let's make a simple tool to make a publication quality figure with the graphical derivation of the 310nm result. 
 
 ```{r setup, include=FALSE, echo=FALSE}
 knitr::opts_chunk$set(echo = FALSE)
@@ -50,7 +50,7 @@ And then we select a day and location for the figure. If you want a different ch
 # year: from 1998 to 2003
 #  for Acadia, summer solstice (June 21,2000) select [dset=1, day=173, year=2000]
 
-dset <- 1  
+dset <- 2  
 day <- 173  
 year <- 2000
 ```
@@ -64,7 +64,7 @@ load(uvnet_files[dset])  #  loads: data_file_info[date, qc info, location, instr
 rowfilter <- duplicated(scans_info)
 lam <- gsub("nm", "", colnames(spectra)) %>% as.numeric
 easv <- eas(lam)
-scans_info$uvi <- spectra %*% easv * 0.5 / 25
+scans_info$uvi <- spectra %*% easv * 0.5 / 25   # 25 mW/m2, so spectra are in mW/m2/nm and 0.5nm is d\lambda 
 uvimin <- 0.01
 uvimax <- 15
 rowfilter <- rowfilter | scans_info$uvi <= uvimin | scans_info$uvi >= uvimax
@@ -185,11 +185,23 @@ day_3fig <- function(year = 1999, day = 180, location="Acadia NP", select_scans 
 ```{r subset, fig.width=8, fig.height=9}
 figsave=FALSE
 #select_spectra <- grepl(paste0("[:alpha:]",year,day), scans_info$spec_name)
-
+pdf <- TRUE
+if (figsave){
+mag<-3 } else {mag <- 1}
+cextitle <- 1.5*mag
+if(figsave){
+  if(pdf){
+    pdf(file="fig3graphderiv.pdf", width=7, height=7*510/340, pointsize=10)
+    mag <- 1
+    cextitle <- mag
+  }else{
+  png(filename="fig3graphderiv.png", width=mag*340, height=mag*510)
+  }
+} # else {figsave=TRUE}
 select_spectra <- grepl(paste0(year,day,"s"), scans_info$spec_name)
 scans_used <- scans_info[select_spectra, ]
 spectra_used <- spectra[select_spectra, ]
-if(figsave){  png(filename="fig2derive.png", width=700, height=1020) }
+#if(figsave){  png(filename="fig2derive_alb.png", width=700, height=1020) }
 
 day_3fig(year=year, day=day, location=uvnet_sites[dset], select_scans = select_spectra, uvimin=.5, cex=3)
 

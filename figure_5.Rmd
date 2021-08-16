@@ -110,7 +110,8 @@ huber_uvnet$huberuvi <- apply(huber_uvnet, 1, huber_wrap)
 
 ```{r PCA}
 #------------------ PCA of parameter space ------------------
-#    unthinking approach just feeding the data into base R
+#    a simple way to get the shape of the space without over 
+#    reliance on the parameters used to define it.
 #------------------------------------------------------------
 pmat <- huber_uvnet[ , c("ozone", "aerosol", "rayleigh", "zenith")] %>% as.matrix
 #------------ PCA pass 2. With Info and Dx of Huber Model ------------
@@ -199,7 +200,20 @@ rm(ind_310)
 
 
 ```{r param_space_visualization3_contoured}
-savefig=FALSE  
+figsave=FALSE  
+pdf <- TRUE
+if (figsave){
+mag<-3 } else {mag <- 1}
+cextitle <- 1.5*mag
+if(figsave){
+  if(pdf){
+    pdf(file="fig5huberspace.pdf", width=7, height=4, pointsize=10)
+    mag <- 1
+    cextitle <- mag
+  }else{
+  png(filename="fig5huberspace.png", width=mag*340, height=mag*510)
+  }
+} # else {figsave=TRUE}
 ecbreaks <- c(0.02, 0.1, 0.30, 1, 1.5, 1e9)
 hpar$errf <- sapply(hpar$uvi_err,function(x) min(which(abs(x) < ecbreaks)) ) %>% as.factor
 
@@ -227,12 +241,9 @@ plt <- ggplot(hpar[rfilter, ], aes(x=ozone*37209.3, y=aerosol/2.302)) +
   theme(axis.title = element_text(size=20), axis.text = element_text(size=14), 
         legend.text = element_text(size=14), legend.title = element_text(size=14))
 
-if(savefig){
-png('fig4.png', height=480, width=640)
-}
 print(plt)  # figure saved as .png 480x480. .svg file is huge because of the 400,000 points.
 
-if(savefig){
+if(figsave){
   dev.off()
   print(plt)
 }
